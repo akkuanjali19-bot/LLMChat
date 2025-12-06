@@ -1,56 +1,64 @@
-# main.py
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import os
 import requests
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 
-# Load OpenRouter API key from environment
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-if not OPENROUTER_API_KEY:
-    raise RuntimeError("OPENROUTER_API_KEY not set in environment variables")
-
-# Initialize FastAPI
 app = FastAPI()
 
-# Load models from environment variables
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "mistralai/mixtral-8x7b-instruct")
-AVAILABLE_MODELS = [m.strip() for m in os.getenv("AVAILABLE_MODELS", "").split(",") if m.strip()]
+# Enable CORS for browser testing
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 
-# Pydantic models for request
+# Load API key
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+# Default model
+DEFAULT_MODEL = "mistralai/mixtral-8x7b-instruct"
+
+# Request schema
 class Message(BaseModel):
     role: str
     content: str
 
 class ChatRequest(BaseModel):
-    model: str = None  # optional, will use DEFAULT_MODEL if not provided
+    model: str = None
     messages: list[Message]
 
-# OpenRouter API call function
-def call_openrouter(model, messages):
-    url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}"}
-    payload = {
-        "model": model,
-        "messages": messages,
-        "stream": False  # set True if you handle streaming on frontend
-    }
-    response = requests.post(url, headers=headers, json=payload)
-    if response.status_code != 200:
-        raise HTTPException(status_code=response.status_code, detail=response.text)
-    return response.json()
-
-# Chat endpoint (POST only)
-@app.post("/chat")
-def chat(request: ChatRequest):
-    model = request.model or DEFAULT_MODEL
-    if model not in AVAILABLE_MODELS:
-        raise HTTPException(status_code=400, detail=f"Model '{model}' not available")
-    
-    messages_payload = [msg.dict() for msg in request.messages]
-    response_json = call_openrouter(model, messages_payload)
-    return response_json
-
-# Health check endpoint
+# Health check
 @app.get("/")
-def health_check():
-    return {"status": "LLMChat backend running"}
+def home():
+    return {"status": "OK"}
+
+# Handle preflight (browser OPTIONS)
+@app.options("/chat")
+def options_chat():
+    return {}
+
+# Main chat endpoint
+@app.post("/chat")
+def chat(req: ChatRequest):
+    model = req.model or DEFAULT_MODEL
+
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    body = {
+        "model": model,
+        "messages": [m.dict() for m in req.messages]
+    }
+
+    response = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers=headers,
+        json=body
+    )
+
+    # Directly return OpenRouter response
+    return response.json()
